@@ -1,0 +1,89 @@
+import { strict as assert } from 'node:assert';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, it } from 'node:test';
+
+import { Broker } from '../src/broker.js';
+import { acquireLock, checkOnce, runWatch, watchLockPath } from '../src/watch.js';
+import type { WatchContext } from '../src/watch.js';
+
+let root = '';
+let broker: Broker;
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'a2ab-watch-'));
+  broker = new Broker(root);
+  broker.registerSession({ sessionId: 'me', provider: 'claude', displayName: 'me', cwd: 'C:/x' });
+  broker.registerSession({ sessionId: 'peer', provider: 'claude', displayName: 'peer', cwd: 'C:/y' });
+});
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+});
+
+function makeContext(): WatchContext {
+  const lockPath = watchLockPath(root, 'me');
+  const nonce = 'nonce-1';
+  acquireLock(lockPath, nonce);
+  return { broker, sessionId: 'me', lockPath, nonce };
+}
+
+describe('checkOnce', () => {
+  it('인박스가 비어 있으면 none', () => {
+    const result = checkOnce(makeContext());
+    assert.equal(result.tick, 'none');
+  });
+
+  it('request가 도착하면 popped + 주입 페이로드를 만든다', () => {
+    const ctx = makeContext();
+    broker.send({ fromSessionId: 'peer', toSessionId: 'me', kind: 'request', origin: 'agent', text: 'wake up please' });
+    const result = checkOnce(ctx);
+    assert.equal(result.tick, 'popped');
+    assert.ok(result.payload?.includes('wake up please'));
+    assert.ok(result.payload?.toLowerCase().includes('untrusted'));
+    // pop이므로 두 번째 확인은 none
+    assert.equal(checkOnce(ctx).tick, 'none');
+  });
+
+  it('notification만으로는 깨우지 않는다 (프로토콜 2.1)', () => {
+    const ctx = makeContext();
+    broker.send({ fromSessionId: 'peer', toSessionId: 'me', kind: 'notification', origin: 'agent', text: 'FYI only' });
+    assert.equal(checkOnce(ctx).tick, 'none');
+  });
+
+  it('세션이 offline이면 감시를 중단한다', () => {
+    const ctx = makeContext();
+    broker.markOffline('me');
+    assert.equal(checkOnce(ctx).tick, 'offline');
+  });
+
+  it('더 새 watcher가 lock을 가져가면 물러난다', () => {
+    const ctx = makeContext();
+    writeFileSync(ctx.lockPath, JSON.stringify({ nonce: 'newer-nonce', pid: 999 }), 'utf8');
+    assert.equal(checkOnce(ctx).tick, 'lock-lost');
+  });
+});
+
+describe('runWatch', () => {
+  it('대기 중 request가 있으면 즉시 exit 2 + 페이로드', async () => {
+    broker.send({ fromSessionId: 'peer', toSessionId: 'me', kind: 'request', origin: 'agent', text: 'urgent' });
+    const result = await runWatch(broker, 'me', root, { pollMs: 10, maxMs: 1000 });
+    assert.equal(result.exitCode, 2);
+    assert.ok(result.payload?.includes('urgent'));
+  });
+
+  it('감시 시간 초과 시 조용히 exit 0', async () => {
+    const result = await runWatch(broker, 'me', root, { pollMs: 10, maxMs: 50 });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.payload, undefined);
+  });
+
+  it('새 watcher가 시작되면 기존 watcher의 lock을 대체한다', () => {
+    const lockPath = watchLockPath(root, 'me');
+    acquireLock(lockPath, 'old');
+    acquireLock(lockPath, 'new');
+    const lock = JSON.parse(readFileSync(lockPath, 'utf8')) as { nonce: string };
+    assert.equal(lock.nonce, 'new');
+  });
+});

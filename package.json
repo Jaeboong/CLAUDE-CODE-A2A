@@ -1,0 +1,19 @@
+{
+  "name": "a2ab",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A2A terminal-agent broker spike: session registry, inbox, turn-boundary delivery",
+  "type": "module",
+  "bin": {
+    "a2ab": "./bin/a2ab.mjs"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
