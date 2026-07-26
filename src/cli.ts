@@ -15,6 +15,7 @@ import {
   handleStop,
 } from './hooks.js';
 import type { HookInput, HookOutput } from './hooks.js';
+import { installHooks } from './install.js';
 import type { MessageKind, MessageOrigin } from './protocol.js';
 import { runWatch } from './watch.js';
 
@@ -125,6 +126,8 @@ const CLI_OPTIONS = {
   'idempotency-key': { type: 'string' },
   'ttl': { type: 'string' },
   'deadline': { type: 'string' },
+  'settings': { type: 'string' },
+  'print': { type: 'boolean' },
 } as const;
 
 export async function main(argv: ReadonlyArray<string>): Promise<void> {
@@ -220,6 +223,14 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
       printJson({ root: rootDir(), sessions });
       return;
     }
+    case 'init': {
+      const result = installHooks({
+        ...(values['settings'] === undefined ? {} : { settingsPath: values['settings'] }),
+        ...(values['print'] === true ? { print: true } : {}),
+      });
+      printJson(result);
+      return;
+    }
     case 'hook': {
       const [event] = rest;
       if (event === undefined) {
@@ -231,7 +242,7 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
     default:
       throw new Error(
         `unknown command: ${command ?? '(none)'}\n` +
-          'usage: a2ab register|peers|inbox|send|touch|status|hook',
+          'usage: a2ab init|register|peers|inbox|send|touch|status|hook',
       );
   }
 }

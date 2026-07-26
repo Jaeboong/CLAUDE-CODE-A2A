@@ -11,6 +11,22 @@ export type {
 export { Store } from './store.js';
 
 export {
+  buildHookEntries,
+  defaultSettingsPath,
+  installHooks,
+  mergeHooks,
+  resolveA2abCommand,
+} from './install.js';
+export type {
+  HookCommand,
+  HookEntry,
+  InstallOptions,
+  InstallResult,
+  MergeResult,
+  Settings,
+} from './install.js';
+
+export {
   DEFAULT_NOTIFICATION_TTL_SECONDS,
   DEFAULT_REQUEST_DEADLINE_SECONDS,
   messageText,

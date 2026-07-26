@@ -5,10 +5,9 @@
 
 import { execSync } from 'node:child_process';
 import { basename } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 
 import type { Broker } from './broker.js';
+import { resolveA2abCommand } from './install.js';
 import type { InboxItem } from './protocol.js';
 import { messageText } from './protocol.js';
 
@@ -32,10 +31,8 @@ export interface HookOutput {
   };
 }
 
-function a2abCommand(): string {
-  const binPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'a2ab.mjs');
-  return `node "${binPath}"`;
-}
+// 전역 설치면 `a2ab`, 저장소에서 직접 쓰는 경우엔 절대 경로 형태가 된다.
+const a2abCommand = resolveA2abCommand;
 
 function detectBranch(cwd: string): string | undefined {
   try {

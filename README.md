@@ -21,6 +21,20 @@ npm install -g @jaeboong/a2ab
 
 ### 1. Claude Code hook 연결
 
+```sh
+a2ab init
+```
+
+`~/.claude/settings.json`에 hook을 병합합니다. 기존 설정과 다른 hook은 그대로 보존하고, 덮어쓰기 전에 `settings.json.bak`으로 백업합니다. 여러 번 실행해도 중복 등록되지 않습니다.
+
+- `--print` — 파일을 쓰지 않고 병합 결과만 출력
+- `--settings <경로>` — 기본 경로(`~/.claude/settings.json`) 대신 지정
+
+**등록 후 `claude`를 새로 띄워야 적용됩니다.** hook은 세션 시작 시점에만 읽힙니다.
+
+<details>
+<summary>수동으로 설정하려면</summary>
+
 `~/.claude/settings.json`의 `hooks`에 아래를 추가합니다.
 
 ```json
@@ -57,6 +71,10 @@ npm install -g @jaeboong/a2ab
 }
 ```
 
+</details>
+
+각 hook의 역할:
+
 - `session-start` — 세션을 레지스트리에 등록하고, 에이전트에게 사용법을 컨텍스트로 주입합니다.
 - `post-tool-use` — 파일 수정 시 touching path를 기록해 다른 세션과의 충돌을 감지합니다.
 - `stop` — 턴이 끝나는 시점에 인박스를 확인해 대기 중인 request를 주입합니다.
@@ -84,6 +102,7 @@ a2ab inbox  --session <내 세션 id 또는 이름>
 
 | 명령 | 설명 |
 | --- | --- |
+| `a2ab init [--print] [--settings <경로>]` | Claude Code hook 설정 병합 |
 | `a2ab register --name <이름> [--session-id <id>] [--provider <p>] [--cwd <경로>] [--task <설명>] [--branch <브랜치>]` | 세션 수동 등록 |
 | `a2ab status` | 레지스트리 전체 상태 |
 | `a2ab peers --session <id\|이름>` | 살아 있는 다른 세션 + 나와의 파일 충돌 |
