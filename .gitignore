@@ -1,3 +1,9 @@
 node_modules/
+dist/
 .state/
 *.tmp
+*.log
+*.tgz
+.env
+.env.*
+.npmrc

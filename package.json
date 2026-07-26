@@ -1,15 +1,53 @@
 {
-  "name": "a2ab",
-  "version": "0.0.1",
-  "private": true,
-  "description": "A2A terminal-agent broker spike: session registry, inbox, turn-boundary delivery",
+  "name": "@jaeboong/a2ab",
+  "version": "0.1.0",
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "A2A terminal-agent broker: session registry, inbox, turn-boundary delivery",
   "type": "module",
+  "license": "MIT",
+  "author": "Jaeboong",
+  "homepage": "https://github.com/Jaeboong/CLAUDE-CODE-A2A#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jaeboong/CLAUDE-CODE-A2A.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Jaeboong/CLAUDE-CODE-A2A/issues"
+  },
+  "keywords": [
+    "a2a",
+    "agent",
+    "claude-code",
+    "cli",
+    "broker",
+    "multi-agent"
+  ],
   "bin": {
-    "a2ab": "./bin/a2ab.mjs"
+    "a2ab": "bin/a2ab.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.11"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "test": "node --import tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
