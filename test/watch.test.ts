@@ -73,10 +73,28 @@ describe('runWatch', () => {
     assert.ok(result.payload?.includes('urgent'));
   });
 
-  it('감시 시간 초과 시 조용히 exit 0', async () => {
+  // hook timeout 상한 때문에 watcher는 반드시 죽는다. 그대로 끝내면 오래 유휴인 세션은
+  // 인박스를 보는 사람이 없어져 request가 조용히 만료된다 — 후계자를 띄우라고 알려야 한다.
+  it('감시 시간 초과 시 exit 0 + renew', async () => {
     const result = await runWatch(broker, 'me', root, { pollMs: 10, maxMs: 50 });
     assert.equal(result.exitCode, 0);
     assert.equal(result.payload, undefined);
+    assert.equal(result.renew, true);
+  });
+
+  // 세션이 끝났거나 더 새 watcher가 들어온 경우는 이어받을 이유가 없다.
+  it('세션 종료·lock 상실로 물러날 때는 renew하지 않는다', async () => {
+    broker.markOffline('me');
+    const offline = await runWatch(broker, 'me', root, { pollMs: 10, maxMs: 5000 });
+    assert.equal(offline.exitCode, 0);
+    assert.equal(offline.renew, undefined);
+
+    broker.registerSession({ sessionId: 'me', provider: 'claude', displayName: 'me', cwd: 'C:/x' });
+    const running = runWatch(broker, 'me', root, { pollMs: 10, maxMs: 5000 });
+    acquireLock(watchLockPath(root, 'me'), 'newer-watcher');
+    const lockLost = await running;
+    assert.equal(lockLost.exitCode, 0);
+    assert.equal(lockLost.renew, undefined);
   });
 
   it('새 watcher가 시작되면 기존 watcher의 lock을 대체한다', () => {

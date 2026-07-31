@@ -27,6 +27,8 @@ export interface RunWatchOptions {
 export interface WatchResult {
   readonly exitCode: number;
   readonly payload?: string;
+  // 수명이 다 차서 물러나는 경우. 세션은 아직 살아 있으므로 호출자가 후계자를 띄워야 한다.
+  readonly renew?: boolean;
 }
 
 export function watchLockPath(rootDir: string, sessionId: string): string {
@@ -96,5 +98,8 @@ export async function runWatch(
     }
     await sleep(pollMs);
   }
-  return { exitCode: 0 };
+  // hook timeout 상한(4시간) 때문에 watcher는 반드시 죽는다. 여기서 그냥 끝내면
+  // 4시간 넘게 유휴인 세션은 아무도 인박스를 보지 않아 request가 데드라인에 조용히
+  // 만료된다. 그래서 물러나기 전에 후계자를 띄우라고 알린다 (cli.ts의 watch 분기).
+  return { exitCode: 0, renew: true };
 }

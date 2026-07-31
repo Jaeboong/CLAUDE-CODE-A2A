@@ -139,3 +139,25 @@ describe('SessionEnd hook', () => {
     assert.equal(peer?.status, 'offline');
   });
 });
+
+describe('handleSessionStart provider', () => {
+  const startInput = { session_id: 'codex-sess-1', cwd: 'C:/repo', hook_event_name: 'SessionStart' };
+
+  it('provider를 codex로 등록하고 idle 안내를 덧붙인다', () => {
+    const out = handleSessionStart(startInput, broker, 'codex');
+    broker.registerSession({ sessionId: 'other', provider: 'claude', displayName: 'o', cwd: 'C:/x' });
+    const seen = broker.peers('other').peers.find((p) => p.sessionId === 'codex-sess-1');
+
+    assert.equal(seen?.provider, 'codex');
+    assert.match(out?.hookSpecificOutput?.additionalContext ?? '', /idle 상태에서 자동으로 깨어나지 않는다/);
+  });
+
+  it('기본값은 claude이고 idle 안내를 넣지 않는다', () => {
+    const out = handleSessionStart({ ...startInput, session_id: 'claude-sess-9' }, broker);
+    broker.registerSession({ sessionId: 'other2', provider: 'claude', displayName: 'o2', cwd: 'C:/x' });
+    const seen = broker.peers('other2').peers.find((p) => p.sessionId === 'claude-sess-9');
+
+    assert.equal(seen?.provider, 'claude');
+    assert.equal((out?.hookSpecificOutput?.additionalContext ?? '').includes('idle 상태'), false);
+  });
+});

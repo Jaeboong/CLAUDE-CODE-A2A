@@ -1,6 +1,7 @@
 // a2ab CLI — 운영·진단·에이전트용 pull 도구 (핸드오프 17절).
 // hook 하위 명령은 Claude Code hook의 stdin JSON을 받아 HookOutput JSON을 출력한다.
 
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,8 @@ import {
   handleStop,
 } from './hooks.js';
 import type { HookInput, HookOutput } from './hooks.js';
-import { installHooks } from './install.js';
+import { installAllHooks } from './install.js';
+import type { InstallTarget } from './install.js';
 import type { MessageKind, MessageOrigin } from './protocol.js';
 import { runWatch } from './watch.js';
 
@@ -45,6 +47,17 @@ function parseKind(raw: string | undefined): MessageKind {
   throw new Error(`--kind must be request|notification, got: ${raw ?? '(missing)'}`);
 }
 
+// 미지정은 '자동 감지'다. 'claude'로 접지 않는다.
+function parseTarget(raw: string | undefined): InstallTarget | 'both' | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw === 'claude' || raw === 'codex' || raw === 'both') {
+    return raw;
+  }
+  throw new Error(`--target must be claude|codex|both, got: ${raw}`);
+}
+
 function parseOrigin(raw: string | undefined): MessageOrigin {
   if (raw === undefined) {
     return 'agent';
@@ -69,19 +82,68 @@ function readStdinJson(): HookInput {
   }
 }
 
-async function runHook(event: string, broker: Broker): Promise<void> {
+// watcher 한 세대는 약 4시간(Claude Code hook timeout 상한)이다. 이만큼 이어받으면
+// 하루가 조금 넘게 커버된다.
+//
+// 무제한으로 두지 않는 이유: 세션은 SessionEnd hook에서만 offline이 된다. 터미널이
+// 강제 종료되면 그 hook이 안 돌아 레지스트리에는 영원히 active로 남고, 그러면 후계자
+// 체인이 영원히 이어져 고아 프로세스가 4시간마다 되살아난다. 상한이 그 사고를 막는다.
+// 정상 종료된 세션은 상한과 무관하게 다음 폴링(1.5초)에서 즉시 멈춘다.
+const MAX_WATCH_RENEWALS = 6;
+
+// 만료된 watcher를 이어받을 후계자를 detached로 띄운다.
+// 세션 id는 stdin이 아니라 인자로 넘긴다 — 부모가 곧 종료하므로 파이프에 의존하지 않는다.
+function spawnSuccessorWatcher(sessionId: string, generation: number): void {
+  if (generation >= MAX_WATCH_RENEWALS) {
+    return;
+  }
+  const args = process.argv.slice(1).filter((a, i, all) => {
+    const prev = all[i - 1];
+    return a !== '--renewals' && prev !== '--renewals';
+  });
+  if (!args.includes('--session')) {
+    args.push('--session', sessionId);
+  }
+  args.push('--renewals', String(generation + 1));
+
+  const child = spawn(process.execPath, args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+}
+
+async function runHook(
+  event: string,
+  broker: Broker,
+  provider: string,
+  sessionRef: string | undefined,
+  generation: number,
+): Promise<void> {
   const input = readStdinJson();
 
   // watch: 백그라운드 인박스 감시 (asyncRewake). request 도착 시 exit 2로 모델을 깨운다.
   if (event === 'watch') {
-    const sessionId = input.session_id;
+    // 후계자는 stdin 없이 --session으로 되살아난다.
+    const sessionId = input.session_id ?? sessionRef;
     if (sessionId === undefined || !broker.hasSession(sessionId)) {
       return;
     }
-    const result = await runWatch(broker, sessionId, rootDir());
+    // 한 세대 수명 override. 기본값은 hook timeout에 묶여 4시간이라 검증이 불가능하다.
+    const maxMsRaw = Number(process.env['A2AB_WATCH_MAX_MS'] ?? '');
+    const result = await runWatch(
+      broker,
+      sessionId,
+      rootDir(),
+      Number.isFinite(maxMsRaw) && maxMsRaw > 0 ? { maxMs: maxMsRaw } : {},
+    );
     if (result.payload !== undefined) {
       // exit 2 경로의 hook 출력 채널은 stderr다.
       process.stderr.write(`${result.payload}\n`);
+    }
+    if (result.renew === true) {
+      spawnSuccessorWatcher(sessionId, generation);
     }
     process.exit(result.exitCode);
   }
@@ -89,7 +151,7 @@ async function runHook(event: string, broker: Broker): Promise<void> {
   let output: HookOutput | undefined;
   switch (event) {
     case 'session-start':
-      output = handleSessionStart(input, broker);
+      output = handleSessionStart(input, broker, provider);
       break;
     case 'stop':
       output = handleStop(input, broker);
@@ -127,6 +189,8 @@ const CLI_OPTIONS = {
   'ttl': { type: 'string' },
   'deadline': { type: 'string' },
   'settings': { type: 'string' },
+  'target': { type: 'string' },
+  'renewals': { type: 'string' },
   'print': { type: 'boolean' },
 } as const;
 
@@ -224,11 +288,13 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
       return;
     }
     case 'init': {
-      const result = installHooks({
+      const target = parseTarget(values['target']);
+      const installed = installAllHooks({
+        ...(target === undefined ? {} : { target }),
         ...(values['settings'] === undefined ? {} : { settingsPath: values['settings'] }),
         ...(values['print'] === true ? { print: true } : {}),
       });
-      printJson(result);
+      printJson({ installed });
       return;
     }
     case 'hook': {
@@ -236,13 +302,19 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
       if (event === undefined) {
         throw new Error('hook requires an event: session-start|stop|post-tool-use|session-end|watch');
       }
-      await runHook(event, broker);
+      await runHook(
+        event,
+        broker,
+        values['provider'] ?? 'claude',
+        values['session'],
+        Number(values['renewals'] ?? '0'),
+      );
       return;
     }
     default:
       throw new Error(
         `unknown command: ${command ?? '(none)'}\n` +
-          'usage: a2ab init|register|peers|inbox|send|touch|status|hook',
+          'usage: a2ab init [--target claude|codex|both]|register|peers|inbox|send|touch|status|hook',
       );
   }
 }
