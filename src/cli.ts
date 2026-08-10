@@ -192,6 +192,7 @@ const CLI_OPTIONS = {
   'target': { type: 'string' },
   'renewals': { type: 'string' },
   'print': { type: 'boolean' },
+  'active-only': { type: 'boolean' },
 } as const;
 
 export async function main(argv: ReadonlyArray<string>): Promise<void> {
@@ -226,7 +227,12 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
       if (ref === undefined) {
         throw new Error('peers requires --session <id|name>');
       }
-      printJson(broker.peers(resolveSessionId(broker, ref)));
+      const result = broker.peers(resolveSessionId(broker, ref));
+      printJson(
+        values['active-only'] === true
+          ? { ...result, peers: result.peers.filter((peer) => peer.status === 'active') }
+          : result,
+      );
       return;
     }
     case 'inbox': {

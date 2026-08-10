@@ -117,6 +117,46 @@ describe('Stop hook — 턴 경계 소비', () => {
     assert.ok(out?.systemMessage?.includes('editing auth.ts'));
   });
 
+  it('여러 줄 notification은 첫 줄만 표시하고 원문 조회 방법을 안내한다', () => {
+    broker.send({
+      fromSessionId: 'peer-1',
+      toSessionId: 'claude-sess-1',
+      kind: 'notification',
+      origin: 'agent',
+      text: '트랙 7 완료 — 37건 통과\n세부 점검 결과는 길어서 기본 화면에서 숨긴다',
+    });
+    const out = handleStop(stopInput, broker);
+
+    assert.match(out?.systemMessage ?? '', /트랙 7 완료 — 37건 통과 …/);
+    assert.doesNotMatch(out?.systemMessage ?? '', /세부 점검 결과/);
+    assert.match(out?.systemMessage ?? '', /a2ab inbox --session claude-sess-1/);
+    // Stop에서 ack한 뒤에도 TTL 동안 inbox pull로 원문을 읽을 수 있다.
+    assert.match(
+      broker.inbox('claude-sess-1').notifications
+        .map((item) => item.parts)
+        .flat()
+        .map((part) => part.type === 'text' ? part.text : '')
+        .join('\n'),
+      /세부 점검 결과/,
+    );
+  });
+
+  it('긴 한 줄 notification도 96자에서 잘라 화면 폭을 제한한다', () => {
+    const longText = `${'가'.repeat(110)}TAIL_MARKER`;
+    broker.send({
+      fromSessionId: 'peer-1',
+      toSessionId: 'claude-sess-1',
+      kind: 'notification',
+      origin: 'agent',
+      text: longText,
+    });
+    const out = handleStop(stopInput, broker);
+
+    assert.match(out?.systemMessage ?? '', new RegExp(`가{96}…`));
+    assert.doesNotMatch(out?.systemMessage ?? '', /TAIL_MARKER/);
+    assert.match(out?.systemMessage ?? '', /a2ab inbox --session claude-sess-1/);
+  });
+
   it('같은 notification을 두 번 표시하지 않는다', () => {
     broker.send({ fromSessionId: 'peer-1', toSessionId: 'claude-sess-1', kind: 'notification', origin: 'agent', text: 'once only' });
     handleStop(stopInput, broker);

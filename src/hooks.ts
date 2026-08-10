@@ -128,10 +128,41 @@ function formatRequestBlock(item: InboxItem, broker: Broker): string {
   ].join('\n');
 }
 
+const NOTIFICATION_PREVIEW_CHARACTERS = 96;
+
+function notificationPreview(item: InboxItem): { readonly text: string; readonly hidden: boolean } {
+  const fullText = messageText(item.parts).trim();
+  const firstLine = fullText.split(/\r?\n/, 1)[0]?.trim() ?? '';
+  const characters = Array.from(firstLine);
+  const truncated = characters.length > NOTIFICATION_PREVIEW_CHARACTERS;
+  const text = truncated
+    ? `${characters.slice(0, NOTIFICATION_PREVIEW_CHARACTERS).join('')}…`
+    : firstLine;
+  return {
+    text: text || '(내용 없음)',
+    hidden: truncated || fullText.includes('\n'),
+  };
+}
+
 function formatNotificationLine(item: InboxItem, broker: Broker): string {
   const from = broker.getSession(item.fromSessionId);
   const fromName = from?.displayName ?? item.fromSessionId;
-  return `📩 a2ab notification from ${fromName}: ${messageText(item.parts)}`;
+  const preview = notificationPreview(item);
+  const hiddenSuffix = preview.hidden && !preview.text.endsWith('…') ? ' …' : '';
+  return `📩 ${fromName}: ${preview.text}${hiddenSuffix}`;
+}
+
+function formatNotificationSummary(
+  sessionId: string,
+  items: ReadonlyArray<InboxItem>,
+  broker: Broker,
+): string {
+  const lines = items.map((item) => formatNotificationLine(item, broker));
+  const hasHiddenContent = items.some((item) => notificationPreview(item).hidden);
+  return [
+    ...lines,
+    ...(hasHiddenContent ? [`↳ 원문: a2ab inbox --session ${sessionId}`] : []),
+  ].join('\n');
 }
 
 // request 주입 페이로드. Stop hook(decision: block)과 watcher(asyncRewake)가 공유한다.
@@ -163,7 +194,9 @@ export function handleStop(input: HookInput, broker: Broker): HookOutput | undef
 
   // notification: 턴 없이 사람에게 표시만 (프로토콜 2.2). 매 턴 경계에서 새 것만.
   const acked = broker.ackNotifications(sessionId);
-  const noticeLines = acked.map((n) => formatNotificationLine(n, broker));
+  const noticeSummary = acked.length === 0
+    ? undefined
+    : formatNotificationSummary(sessionId, acked, broker);
 
   // request: 원자적으로 pop해서 턴을 이어간다 (프로토콜 4절). pop이 곧 무한 루프 방지다.
   const requests = broker.popRequests(sessionId);
@@ -171,12 +204,12 @@ export function handleStop(input: HookInput, broker: Broker): HookOutput | undef
     return {
       decision: 'block',
       reason: buildRequestInjection(sessionId, requests, broker),
-      ...(noticeLines.length === 0 ? {} : { systemMessage: noticeLines.join('\n') }),
+      ...(noticeSummary === undefined ? {} : { systemMessage: noticeSummary }),
     };
   }
 
-  if (noticeLines.length > 0) {
-    return { systemMessage: noticeLines.join('\n') };
+  if (noticeSummary !== undefined) {
+    return { systemMessage: noticeSummary };
   }
   return undefined;
 }

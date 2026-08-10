@@ -4,7 +4,7 @@
 
 세션 레지스트리 + 세션별 인박스 + 턴 경계 전달(turn-boundary delivery)로 구성되며, 상태는 머신 로컬 파일(`~/.a2ab`)에 저장됩니다.
 
-- **peers** — 지금 살아 있는 다른 세션과, 나와 같은 파일을 건드리는 세션(충돌 후보) 조회
+- **peers** — 등록된 다른 세션과, 나와 같은 파일을 건드리는 세션(충돌 후보) 조회
 - **inbox** — 나에게 온 request/notification pull
 - **send** — 다른 세션에 request(응답 의무 있음) 또는 notification(통보) 전송
 - **hook** — Claude Code hook에 물려 등록·하트비트·수신 주입을 자동화
@@ -116,6 +116,7 @@ a2ab status
 
 ```sh
 a2ab peers  --session <내 세션 id 또는 이름>
+a2ab peers  --session <내 세션 id 또는 이름> --active-only
 a2ab send   --from <나> --to <상대> --kind request --text "src/auth.ts 잠깐 건드리지 말아줘"
 a2ab inbox  --session <내 세션 id 또는 이름>
 ```
@@ -129,7 +130,7 @@ a2ab inbox  --session <내 세션 id 또는 이름>
 | `a2ab init [--target claude\|codex\|both] [--print] [--settings <경로>]` | hook 설정 병합 (기본: 설치된 CLI 자동 감지) |
 | `a2ab register --name <이름> [--session-id <id>] [--provider <p>] [--cwd <경로>] [--task <설명>] [--branch <브랜치>]` | 세션 수동 등록 |
 | `a2ab status` | 레지스트리 전체 상태 |
-| `a2ab peers --session <id\|이름>` | 살아 있는 다른 세션 + 나와의 파일 충돌 |
+| `a2ab peers --session <id\|이름> [--active-only]` | 다른 세션 + 나와의 파일 충돌 (`--active-only`: 활성 세션만) |
 | `a2ab inbox --session <id\|이름>` | 대기 중인 메시지 pull |
 | `a2ab send --from <id\|이름> --to <id\|이름> --kind request\|notification --text "..."` | 메시지 전송 |
 | `a2ab touch --session <id\|이름> <경로...>` | 작업 중인 경로 등록 |
