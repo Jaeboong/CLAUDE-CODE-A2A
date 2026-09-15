@@ -6,7 +6,7 @@
 // 타깃은 두 가지다.
 // - claude: ~/.claude/settings.json. asyncRewake watch로 idle 세션까지 깨울 수 있다.
 // - codex:  ~/.codex/hooks.json. 이벤트/입출력 계약은 Claude Code와 사실상 동일하지만
-//           async가 아직 미지원이라 watch를 걸 수 없다(§buildCodexHookEntries).
+//           idle 깨우기는 SessionStart/Stop 핸들러가 별도 codex queue 감시자를 띄운다.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -140,10 +140,8 @@ export function buildHookEntries(command: string): Readonly<Record<string, HookE
 }
 
 // Codex CLI(>=0.145)의 hooks.json. 이벤트 이름과 입출력 계약은 Claude Code와 같지만
-// 세 가지가 다르다.
-//  - async가 "parsed but not supported yet"이라 watch를 걸 수 없다. 동기 hook에 긴
-//    timeout을 주면 세션이 그대로 멈추므로 watch는 아예 설치하지 않는다. 결과적으로
-//    codex 세션은 턴 경계(Stop)에서만 request를 받는다 — idle 중에는 깨어나지 않는다.
+//  - async hook 자체는 idle 턴을 시작하지 않는다. session-start/stop 핸들러가
+//    codex queue 지원을 확인하고 별도의 감시자를 띄운다. 긴 동기 hook은 필요 없다.
 //  - Windows에서는 commandWindows가 우선한다.
 //  - SessionEnd는 종료를 붙잡지 않으려고 codex가 timeout을 3초로 강제 clamp한다.
 //    더 큰 값을 쓰면 매 세션 경고가 뜨므로 상한을 그대로 쓴다.
@@ -230,8 +228,9 @@ function readSettings(settingsPath: string): Settings {
 // 파일만 써두고 "설치됐다"고 말하면 사용자는 안 되는 이유를 영원히 못 찾는다.
 const CODEX_FOLLOW_UP =
   'codex를 다시 시작한 뒤 /hooks 에서 a2ab hook을 승인해야 실행된다 ' +
-  '(승인 전에는 조용히 건너뛴다). watch는 codex의 async 미지원 때문에 설치하지 않으므로, ' +
-  'codex 세션은 idle 상태에서 깨어나지 않고 턴 경계에서만 request를 받는다.';
+  '(승인 전에는 조용히 건너뛴다). codex queue를 지원하는 CLI에서는 별도 inbox watcher가 ' +
+  'idle 세션을 깨운다. 미지원 버전 또는 A2AB_CODEX_WAKE=0이면 기존 Stop 전달만 사용한다. ' +
+  'a2ab status의 codexWake로 감시 상태를 확인할 수 있다.';
 
 export function installHooks(options: InstallOptions = {}): InstallResult {
   const target = options.target ?? 'claude';

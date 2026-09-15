@@ -42,7 +42,40 @@ Codex CLI 0.145 이상은 Claude Code와 사실상 동일한 hook 계약을 지�
 **설치 후 두 가지가 남습니다.**
 
 1. `codex`를 다시 띄우고 `/hooks`에서 a2ab hook을 **승인**해야 합니다. Codex는 신뢰하지 않은 command hook을 조용히 건너뜁니다 — 승인 전에는 아무 일도 일어나지 않고 오류도 나지 않습니다.
-2. Codex에는 `async` hook이 아직 없어 watch를 설치하지 않습니다. 따라서 **Codex 세션은 턴 경계(Stop)에서만 request를 받습니다.** idle 상태에서는 깨어나지 않으므로, 답을 기다리는 중이라면 `a2ab inbox`를 직접 호출해야 합니다. Claude 세션은 watch 덕분에 idle 중에도 깨어납니다.
+2. **`codex queue`를 지원하는 Codex CLI에서는 idle 중에도 request를 받습니다**(0.154.0에서 확인). `SessionStart`/`Stop` 핸들러가 별도 감시 프로세스를 띄우고, 1.5초마다 inbox를 확인해 `codex queue --thread <id> --message <깨우기 신호>`를 호출합니다. 열린 CLI가 새 턴을 시작하며, 작업 중인 CLI는 자기 큐의 실행 순서에 따라 처리합니다. 일반 `async` hook 자체에는 idle 턴을 시작하는 기능이 없습니다.
+3. 구버전처럼 `codex queue`가 없거나 `A2AB_CODEX_WAKE=0`이면 기존 `Stop` 전달로 동작합니다. **Desktop/IDE 및 단독 App Server의 자동 깨우기는 이번 지원 범위가 아닙니다.** 동일한 `CODEX_HOME`의 열린 로컬 CLI가 필요하며, CLI가 종료된 세션을 새 프로세스로 재개하지 않습니다.
+
+#### Codex 감시 상태와 기존 세션에 적용
+
+```sh
+a2ab status
+# 이미 열린 세션에도 감시자를 붙일 수 있습니다. 기본적으로 foreground로 실행합니다.
+a2ab codex-watch --session <세션-id>
+# 별도 터미널을 유지하지 않으려면:
+a2ab codex-watch --session <세션-id> --background
+```
+
+`status`의 `codexWake`에는 `running`, `phase`, `pid`, 마지막 오류(`lastError`)가 표시됩니다.
+새 패키지로 업그레이드하면 기존 hook 명령을 그대로 사용합니다. 다음 `SessionStart` 또는
+`Stop`에서 자동 기동되므로 기존 hook 설정을 다시 승인할 필요는 없습니다(명령/신뢰 상태가 그대로인 경우).
+자동 기동 시 macOS/Linux에서는 부모 Codex PID도 추적합니다. `SessionEnd`, 부모 종료,
+또는 24시간 경과 시 감시가 끝납니다. 다음 턴의 `Stop`에서 다시 시작됩니다.
+수동 실행에도 `--owner-pid <Codex-PID>`를 줄 수 있습니다. Windows 및 PID 없는 수동 실행은
+`SessionEnd`와 24시간 상한으로 수명을 제한합니다.
+
+요청 본문은 큐에 복사하지 않습니다. 수신 턴에서 `a2ab receive --session <id>`가 요청을
+한 번 소비하고 검증되지 않은 외부 입력이라는 안내와 함께 반환합니다. 기존 `Stop` hook이
+먼저 소비했다면 `receive`는 빈 결과를 돌려줍니다. `inbox`는 계속 조회 전용 의미를 유지합니다.
+`notification`만으로는 Codex 큐에 신호를 넣지 않습니다.
+
+큐 제출 실패는 inbox의 요청을 남겨두고 5~60초 간격으로 재시도합니다. 성공한 신호의 요청 ID는
+디스크에 기록해 감시자 재시작 시 다시 넣지 않습니다. 제출 성공 직후 프로세스가 죽거나
+응답이 유실된 경우 깨우기 신호가 중복될 수 있지만, 실제 요청 소비는 `Stop`/`receive` 사이에서
+직렬화됩니다. 큐 접수는 모델의 처리 완료 확인이 아니며, deadline이 지난 요청은 실행하지 않습니다.
+Codex 큐에서 신호를 수동 삭제했다면 `receive`로 직접 요청을 확인할 수 있습니다.
+
+`A2AB_CODEX_BIN`으로 사용할 Codex 실행 파일을 지정할 수 있습니다. 원격 endpoint와
+권한·모델 override는 자동으로 추가하지 않습니다. 진단 시 `codex queue --help`부터 확인하세요.
 
 `PostToolUse`는 설치하지 않습니다. Codex의 편집 도구는 `tool_input.file_path`를 주지 않아 `touchingPaths`를 채울 수 없습니다. Codex 세션의 충돌 감지는 cwd/브랜치 기준으로만 동작하고, 파일 단위 충돌은 `a2ab touch`로 직접 등록해야 합니다.
 
@@ -132,13 +165,15 @@ a2ab inbox  --session <내 세션 id 또는 이름>
 | `a2ab status` | 레지스트리 전체 상태 |
 | `a2ab peers --session <id\|이름> [--active-only]` | 다른 세션 + 나와의 파일 충돌 (`--active-only`: 활성 세션만) |
 | `a2ab inbox --session <id\|이름>` | 대기 중인 메시지 pull |
+| `a2ab receive --session <id\|이름>` | pending request를 한 번 소비하고 외부 입력 컨텍스트 반환 |
+| `a2ab codex-watch --session <id\|이름> [--background] [--owner-pid <pid>]` | Codex CLI용 inbox 감시 |
 | `a2ab send --from <id\|이름> --to <id\|이름> --kind request\|notification --text "..."` | 메시지 전송 |
 | `a2ab touch --session <id\|이름> <경로...>` | 작업 중인 경로 등록 |
 | `a2ab hook <event> [--provider <p>]` | hook 진입점 (`session-start`, `stop`, `post-tool-use`, `session-end`, `watch`) |
 
 `send`의 선택 옵션: `--origin human|agent`, `--context <id>`, `--reply-to <messageId>`, `--idempotency-key <key>`, `--ttl <초>`(notification), `--deadline <초>`(request).
 
-모든 명령은 JSON을 stdout으로 출력합니다.
+조회·조작 명령은 JSON을 stdout으로 출력합니다. `codex-watch`의 foreground 실행은 종료될 때까지 감시합니다.
 
 ## 메시지 종류
 
@@ -154,7 +189,13 @@ a2ab inbox  --session <내 세션 id 또는 이름>
   registry.json      # 세션 레지스트리
   inbox/<id>.json    # 세션별 인박스
   audit.jsonl        # 감사 로그
+  codex-watch/<id>.json # 감시 PID, 큐 신호 접수 기록, 오류
 ```
+
+프로세스 사이의 등록·전송·소비는 `.broker-lock` 디렉터리 잠금으로 직렬화됩니다.
+쓰기 도중 강제 종료되어 잠금이 남으면 후속 쓰기는 오류로 멈춥니다. 관련 a2ab 프로세스가
+모두 종료되었는지 확인한 뒤 빈 잠금 디렉터리를 제거하고 재시도하세요. 감시자 시작 잠금은
+`codex-watch/<id>.lock`이며 같은 원칙을 따릅니다.
 
 ## 범위와 한계
 

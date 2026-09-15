@@ -5,6 +5,7 @@
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { withFileLock } from './lock.js';
 
 import type { SessionRecord, StoredMessage } from './protocol.js';
 
@@ -36,9 +37,18 @@ function writeJsonAtomic(filePath: string, value: unknown): void {
 
 export class Store {
   private readonly rootDir: string;
+  private inTransaction = false;
 
   constructor(rootDir: string) {
     this.rootDir = rootDir;
+  }
+
+  transaction<T>(operation: () => T): T {
+    if (this.inTransaction) return operation();
+    return withFileLock(this.rootDir, '.broker-lock', () => {
+      this.inTransaction = true;
+      try { return operation(); } finally { this.inTransaction = false; }
+    });
   }
 
   private registryPath(): string {

@@ -8,8 +8,12 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { Broker } from './broker.js';
+import {
+  findCodexOwnerPid, isProcessAlive, launchCodexWatcher, readCodexWatchState, runCodexWatch,
+} from './codex-watch.js';
 import type { SendInput } from './broker.js';
 import {
+  buildRequestInjection,
   handlePostToolUse,
   handleSessionEnd,
   handleSessionStart,
@@ -150,11 +154,21 @@ async function runHook(
 
   let output: HookOutput | undefined;
   switch (event) {
-    case 'session-start':
+    case 'session-start': {
+      // Register before launching the watcher so it cannot observe an unknown session.
       output = handleSessionStart(input, broker, provider);
+      if (provider === 'codex' && output && input.session_id) {
+        const watching = await launchCodexWatcher(input.session_id, findCodexOwnerPid()).catch(() => false);
+        if (watching) output = codexWakeContext(output);
+      }
       break;
+    }
     case 'stop':
       output = handleStop(input, broker);
+      if (input.session_id && broker.getSession(input.session_id)?.provider === 'codex') {
+        // Optional wake support must never discard a request already claimed by Stop.
+        await launchCodexWatcher(input.session_id, findCodexOwnerPid()).catch(() => false);
+      }
       break;
     case 'post-tool-use':
       output = handlePostToolUse(input, broker);
@@ -168,6 +182,23 @@ async function runHook(
   if (output !== undefined) {
     printJson(output);
   }
+}
+
+function codexWakeContext(output: HookOutput): HookOutput {
+  const context = output.hookSpecificOutput?.additionalContext;
+  if (context === undefined) return output;
+  return {
+    ...output,
+    hookSpecificOutput: {
+      hookEventName: 'SessionStart',
+      additionalContext: context.replace(
+        '이 세션은 idle 상태에서 자동으로 깨어나지 않는다. 상대의 답을 기다리는 중이라면\n위 inbox 명령을 직접 실행해서 확인한다.',
+        'Codex CLI용 inbox watcher가 시작되었다. 열린 CLI에서는 request가 codex queue를 통해 새 턴을 시작한다.\n' +
+        '깨우기 신호를 받으면 안내된 receive 명령으로 요청을 한 번만 소비한다. notification은 깨우지 않는다.\n' +
+        '자동 수신이 안 되면 a2ab status의 codexWake 상태와 inbox를 확인한다.',
+      ),
+    },
+  };
 }
 
 const CLI_OPTIONS = {
@@ -193,6 +224,8 @@ const CLI_OPTIONS = {
   'renewals': { type: 'string' },
   'print': { type: 'boolean' },
   'active-only': { type: 'boolean' },
+  'owner-pid': { type: 'string' },
+  'background': { type: 'boolean' },
 } as const;
 
 export async function main(argv: ReadonlyArray<string>): Promise<void> {
@@ -243,6 +276,41 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
       printJson(broker.inbox(resolveSessionId(broker, ref)));
       return;
     }
+    case 'receive': {
+      const ref = values['session'];
+      if (!ref) throw new Error('receive requires --session <id|name>');
+      const sessionId = resolveSessionId(broker, ref);
+      const requests = broker.popRequests(sessionId);
+      printJson({ sessionId, requests, context: requests.length === 0 ? null : buildRequestInjection(sessionId, requests, broker) });
+      return;
+    }
+    case 'codex-watch': {
+      const ref = values['session'];
+      if (!ref) throw new Error('codex-watch requires --session <id|name>');
+      const sessionId = resolveSessionId(broker, ref);
+      if (broker.getSession(sessionId)?.provider !== 'codex') throw new Error('codex-watch requires a Codex session');
+      const ownerPid = values['owner-pid'] === undefined ? undefined : Number(values['owner-pid']);
+      if (ownerPid !== undefined && (!Number.isSafeInteger(ownerPid) || ownerPid <= 1)) throw new Error('--owner-pid must be an integer greater than 1');
+      if (values['background']) {
+        const started = await launchCodexWatcher(sessionId, ownerPid);
+        if (!started) throw new Error('Codex queue unavailable or disabled; install a CLI with codex queue or check A2AB_CODEX_BIN/A2AB_CODEX_WAKE');
+        printJson({ started, sessionId });
+        return;
+      }
+      const controller = new AbortController();
+      const stop = (): void => controller.abort();
+      process.once('SIGTERM', stop);
+      process.once('SIGINT', stop);
+      try {
+        await runCodexWatch(broker, sessionId, rootDir(), {
+          ...(ownerPid === undefined ? {} : { ownerPid }), signal: controller.signal,
+        });
+      } finally {
+        process.removeListener('SIGTERM', stop);
+        process.removeListener('SIGINT', stop);
+      }
+      return;
+    }
     case 'send': {
       const from = values['from'];
       const to = values['to'];
@@ -289,6 +357,12 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
         branch: s.branch ?? null,
         touching: s.touchingPaths.length,
         lastSeenAt: s.lastSeenAt,
+        ...(s.provider !== 'codex' ? {} : {
+          codexWake: (() => {
+            const state = readCodexWatchState(rootDir(), s.sessionId);
+            return state === undefined ? null : { ...state, running: state.phase !== 'stopped' && isProcessAlive(state.pid) };
+          })(),
+        }),
       }));
       printJson({ root: rootDir(), sessions });
       return;
@@ -320,7 +394,7 @@ export async function main(argv: ReadonlyArray<string>): Promise<void> {
     default:
       throw new Error(
         `unknown command: ${command ?? '(none)'}\n` +
-          'usage: a2ab init [--target claude|codex|both]|register|peers|inbox|send|touch|status|hook',
+          'usage: a2ab init [--target claude|codex|both]|register|peers|inbox|receive|codex-watch|send|touch|status|hook',
       );
   }
 }

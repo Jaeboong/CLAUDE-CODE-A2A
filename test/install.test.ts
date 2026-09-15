@@ -144,7 +144,7 @@ describe('installHooks', () => {
 describe('buildCodexHookEntries', () => {
   const codex = buildCodexHookEntries('a2ab');
 
-  it('codex가 지원하지 않는 watch는 설치하지 않는다', () => {
+  it('Codex에는 Claude 전용 asyncRewake watch hook을 설치하지 않는다', () => {
     const commands = Object.values(codex).flatMap((e) => e.hooks.map((h) => h.command));
 
     assert.equal(

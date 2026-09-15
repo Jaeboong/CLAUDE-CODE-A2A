@@ -112,6 +112,10 @@ export class Broker {
   }
 
   registerSession(input: RegisterSessionInput): SessionRecord {
+    return this.store.transaction(() => this.registerSessionUnlocked(input));
+  }
+
+  private registerSessionUnlocked(input: RegisterSessionInput): SessionRecord {
     const sessions = { ...this.store.readSessions() };
     const existing = sessions[input.sessionId];
     const now = nowIso();
@@ -158,6 +162,10 @@ export class Broker {
   }
 
   addTouchingPaths(sessionId: string, paths: ReadonlyArray<string>): void {
+    this.store.transaction(() => this.addTouchingPathsUnlocked(sessionId, paths));
+  }
+
+  private addTouchingPathsUnlocked(sessionId: string, paths: ReadonlyArray<string>): void {
     const sessions = { ...this.store.readSessions() };
     const record = sessions[sessionId];
     if (record === undefined) {
@@ -189,6 +197,10 @@ export class Broker {
   }
 
   send(input: SendInput): SendResult {
+    return this.store.transaction(() => this.sendUnlocked(input));
+  }
+
+  private sendUnlocked(input: SendInput): SendResult {
     if (input.fromSessionId === input.toSessionId) {
       throw new Error('self-send is not allowed');
     }
@@ -246,6 +258,10 @@ export class Broker {
   }
 
   inbox(sessionId: string): InboxResult {
+    return this.store.transaction(() => this.inboxUnlocked(sessionId));
+  }
+
+  private inboxUnlocked(sessionId: string): InboxResult {
     const { requests, notifications } = this.sweepInbox(sessionId);
     return {
       sessionId,
@@ -256,6 +272,10 @@ export class Broker {
 
   // 턴 경계 소비: pending request를 정확히 한 번만 반환하고 consumed로 마킹한다.
   popRequests(sessionId: string): ReadonlyArray<InboxItem> {
+    return this.store.transaction(() => this.popRequestsUnlocked(sessionId));
+  }
+
+  private popRequestsUnlocked(sessionId: string): ReadonlyArray<InboxItem> {
     const { requests } = this.sweepInbox(sessionId);
     if (requests.length === 0) {
       return [];
@@ -284,6 +304,10 @@ export class Broker {
   // 세션 계층 표시용: 아직 표시 안 된 notification을 한 번만 반환하고 acked로 마킹한다.
   // acked 후에도 TTL 내에는 inbox() pull에 계속 포함된다 (프로토콜 2.1/2.2).
   ackNotifications(sessionId: string): ReadonlyArray<InboxItem> {
+    return this.store.transaction(() => this.ackNotificationsUnlocked(sessionId));
+  }
+
+  private ackNotificationsUnlocked(sessionId: string): ReadonlyArray<InboxItem> {
     const { notifications } = this.sweepInbox(sessionId);
     const fresh = notifications.filter((m) => m.deliveryStatus === 'enqueued');
     if (fresh.length === 0) {
@@ -303,6 +327,10 @@ export class Broker {
   }
 
   private patchSession(sessionId: string, patch: HeartbeatPatch): void {
+    this.store.transaction(() => this.patchSessionUnlocked(sessionId, patch));
+  }
+
+  private patchSessionUnlocked(sessionId: string, patch: HeartbeatPatch): void {
     const sessions = { ...this.store.readSessions() };
     const record = sessions[sessionId];
     if (record === undefined) {

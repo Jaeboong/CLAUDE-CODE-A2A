@@ -75,8 +75,7 @@ export function handleSessionStart(
     `- ${cmd} inbox --session ${sessionId}    # 대기 중인 request/notification 조회 (pull)`,
     `- ${cmd} send --from ${sessionId} --to <상대 id|이름> --kind request|notification --text "..."`,
     '규칙: request는 응답 의무가 있는 요청, notification은 턴을 발생시키지 않는 통보다.',
-    // codex에는 watch(asyncRewake)가 없다. 턴 경계 밖에서는 아무도 깨워주지 않으므로
-    // 답을 기다리는 중이라면 모델이 직접 인박스를 확인해야 한다.
+    // CLI 진입점은 codex queue 감시자가 시작되면 이 fallback 안내를 교체한다.
     ...(provider === 'codex'
       ? [
           '이 세션은 idle 상태에서 자동으로 깨어나지 않는다. 상대의 답을 기다리는 중이라면',
